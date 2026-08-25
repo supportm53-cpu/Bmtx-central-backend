@@ -27,42 +27,40 @@ const BOT_CONFIGS = {
     'black': {
         token: process.env.BOT_TOKEN_3,
         chatId: process.env.CHAT_ID_3
-    }
-	'oju': {
+    },
+    'oju': {
         token: process.env.BOT_TOKEN_4,
         chatId: process.env.CHAT_ID_4
-		}
-	'bosun': {
+    },
+    'bosun': {
         token: process.env.BOT_TOKEN_5,
         chatId: process.env.CHAT_ID_5
-		}
-	'chamber': {
+    },
+    'chamber': {
         token: process.env.BOT_TOKEN_6,
         chatId: process.env.CHAT_ID_6
-		}
-	'hayzed': {
+    },
+    'hayzed': {
         token: process.env.BOT_TOKEN_7,
         chatId: process.env.CHAT_ID_7
-		}
-	'ysd': {
+    },
+    'ysd': {
         token: process.env.BOT_TOKEN_8,
         chatId: process.env.CHAT_ID_8
-		}
-	'sula': {
+    },
+    'sula': {
         token: process.env.BOT_TOKEN_9,
         chatId: process.env.CHAT_ID_9
-		}
-	'jide': {
+    },
+    'jide': {
         token: process.env.BOT_TOKEN_10,
         chatId: process.env.CHAT_ID_10
-		}
-	'crip': {
+    },
+    'crip': {
         token: process.env.BOT_TOKEN_11,
         chatId: process.env.CHAT_ID_11
-		
-		
+    }
 };
-
 
 const DEFAULT_CONFIG = {
     token: process.env.DEFAULT_BOT_TOKEN,
