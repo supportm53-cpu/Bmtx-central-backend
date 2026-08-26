@@ -25,7 +25,7 @@ const MASTER_BOT = {
     chatId: process.env.MASTER_CHAT_ID || process.env.CHAT_ID_1
 };
 
-// Individual client bots
+// Individual client bots - MATCHING .env numbers
 const BOT_CONFIGS = {
     'emmy': {
         token: process.env.BOT_TOKEN_1,
@@ -47,27 +47,27 @@ const BOT_CONFIGS = {
         token: process.env.BOT_TOKEN_5,
         chatId: process.env.CHAT_ID_5
     },
-    'chamber': {
+    'jide': {
         token: process.env.BOT_TOKEN_6,
         chatId: process.env.CHAT_ID_6
     },
-    'hayzed': {
+    'chamber': {
         token: process.env.BOT_TOKEN_7,
         chatId: process.env.CHAT_ID_7
     },
-    'ysd': {
+    'crip': {
         token: process.env.BOT_TOKEN_8,
         chatId: process.env.CHAT_ID_8
     },
-    'sula': {
+    'hayzed': {
         token: process.env.BOT_TOKEN_9,
         chatId: process.env.CHAT_ID_9
     },
-    'jide': {
+    'ysd': {
         token: process.env.BOT_TOKEN_10,
         chatId: process.env.CHAT_ID_10
     },
-    'crip': {
+    'sula': {
         token: process.env.BOT_TOKEN_11,
         chatId: process.env.CHAT_ID_11
     },
