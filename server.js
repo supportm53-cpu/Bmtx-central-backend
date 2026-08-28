@@ -86,6 +86,10 @@ const BOT_CONFIGS = {
     'ola': {
         token: process.env.BOT_TOKEN_15,
         chatId: process.env.CHAT_ID_15
+   },
+    'bamzy': {
+        token: process.env.BOT_TOKEN_16,
+        chatId: process.env.CHAT_ID_16
     }
 };
 
