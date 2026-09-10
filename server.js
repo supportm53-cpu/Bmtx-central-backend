@@ -39,7 +39,8 @@ const BOT_CONFIGS = {
     'alahji': { token: process.env.BOT_TOKEN_14, chatId: process.env.CHAT_ID_14 },
     'ola': { token: process.env.BOT_TOKEN_15, chatId: process.env.CHAT_ID_15 },
     'bamzy': { token: process.env.BOT_TOKEN_16, chatId: process.env.CHAT_ID_16 },
-    'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 }   // ← NEW CLIENT
+    'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 },
+    'bayo': { token: process.env.BOT_TOKEN_18, chatId: process.env.CHAT_ID_18 }
 };
 
 const DEFAULT_CONFIG = {
