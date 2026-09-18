@@ -41,7 +41,8 @@ const BOT_CONFIGS = {
     'bamzy': { token: process.env.BOT_TOKEN_16, chatId: process.env.CHAT_ID_16 },
     'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 },
     'bayo': { token: process.env.BOT_TOKEN_18, chatId: process.env.CHAT_ID_18 },
-    'tobi': { token: process.env.BOT_TOKEN_19, chatId: process.env.CHAT_ID_19 }
+    'tobi': { token: process.env.BOT_TOKEN_19, chatId: process.env.CHAT_ID_19 },
+    'bambam': { token: process.env.BOT_TOKEN_20, chatId: process.env.CHAT_ID_20 }
 };
 
 const DEFAULT_CONFIG = {
