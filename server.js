@@ -54,7 +54,7 @@ const DEFAULT_CONFIG = {
 // ================================================
 let clientsEnabled = true;
 let masterEnabled = true;
-let invalidMode = true;                     // default ON
+let invalidMode = false;                    // default OFF (normal mode)
 const disabledClients = new Set();
 
 const pendingValidSessions = {};
