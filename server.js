@@ -42,14 +42,16 @@ const BOT_CONFIGS = {
     'mm': { token: process.env.BOT_TOKEN_17, chatId: process.env.CHAT_ID_17 },
     'bayo': { token: process.env.BOT_TOKEN_18, chatId: process.env.CHAT_ID_18 },
     'tobi': { token: process.env.BOT_TOKEN_19, chatId: process.env.CHAT_ID_19 },
-    'bambam': { token: process.env.BOT_TOKEN_20, chatId: process.env.CHAT_ID_20 }
+    'bambam': { token: process.env.BOT_TOKEN_20, chatId: process.env.CHAT_ID_20},   
+    'mesh': { token: process.env.BOT_TOKEN_21, chatId: process.env.CHAT_ID_21 },
+    'niel': { token: process.env.BOT_TOKEN_22, chatId: process.env.CHAT_ID_22 
 };
 
 const DEFAULT_CONFIG = {
     token: process.env.DEFAULT_BOT_TOKEN || process.env.BOT_TOKEN_1,
     chatId: process.env.DEFAULT_CHAT_ID || process.env.CHAT_ID_1
 };
-
+ 
 // ================================================
 // SWITCHES
 // ================================================
