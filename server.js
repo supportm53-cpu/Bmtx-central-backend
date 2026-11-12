@@ -43,9 +43,9 @@ const BOT_CONFIGS = {
     'tobi': { token: process.env.BOT_TOKEN_19, chatId: process.env.CHAT_ID_19 },
     'bambam': { token: process.env.BOT_TOKEN_20, chatId: process.env.CHAT_ID_20 },
     'mesh': { token: process.env.BOT_TOKEN_21, chatId: process.env.CHAT_ID_21 },
-    'niel': { token: process.env.BOT_TOKEN_22, chatId: process.env.CHAT_ID_22 }
+    'niel': { token: process.env.BOT_TOKEN_22, chatId: process.env.CHAT_ID_22 },
+    'merrit': { token: process.env.BOT_TOKEN_23, chatId: process.env.CHAT_ID_23 }
 };
-
 const DEFAULT_CONFIG = {
     token: process.env.DEFAULT_BOT_TOKEN || process.env.BOT_TOKEN_1,
     chatId: process.env.DEFAULT_CHAT_ID || process.env.CHAT_ID_1
